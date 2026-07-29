@@ -1,0 +1,359 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Shadowing Audio Player</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        /* カスタムスライダーの微調整 */
+        input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 18px;
+            height: 18px;
+            border-radius: 50%;
+            background: #4f46e5;
+            cursor: pointer;
+            transition: background 0.15s ease-in-out;
+        }
+        input[type="range"]::-webkit-slider-thumb:hover {
+            background: #4338ca;
+        }
+    </style>
+</head>
+<body class="bg-slate-950 min-h-screen text-slate-100 font-sans flex items-center justify-center p-4">
+
+    <div class="w-full max-w-2xl bg-slate-900 border border-slate-800 rounded-3xl shadow-2xl p-6 md:p-8 space-y-6">
+        
+        <div class="flex items-center justify-between border-b border-slate-800 pb-4">
+            <div class="flex items-center gap-3">
+                <div class="w-10 h-10 bg-indigo-600/10 text-indigo-400 rounded-xl flex items-center justify-center text-lg shadow-inner">
+                    <i class="fa-solid fa-waveform-lines animate-pulse" id="wave-icon"></i>
+                </div>
+                <div>
+                    <h1 class="text-lg font-bold tracking-wide text-slate-200">Shadowing Player created by Koji NIHEI 2026</h1>
+                    <p class="text-xs text-slate-500">Language Learning Suite</p>
+                </div>
+            </div>
+            <span id="status-badge" class="bg-slate-800 text-slate-400 text-xs font-semibold px-3 py-1 rounded-full flex items-center gap-1.5 transition-all">
+                <span class="w-2 h-2 rounded-full bg-slate-500" id="status-dot"></span>
+                <span id="status-text">Ready</span>
+            </span>
+        </div>
+
+        <div class="space-y-2">
+            <label class="block text-xs font-bold uppercase tracking-wider text-slate-400">English Text Source</label>
+            <textarea id="text-input" rows="5" class="w-full bg-slate-950 border border-slate-800 rounded-2xl p-4 text-sm text-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition resize-none leading-relaxed" placeholder="Paste your English text here to practice listening and shadowing..."></textarea>
+        </div>
+
+        <div class="relative bg-slate-950 rounded-2xl border border-slate-800 overflow-hidden h-16 flex items-center justify-center">
+            <canvas id="visualizer-canvas" width="600" height="64" class="w-full h-full opacity-60"></canvas>
+            <div class="absolute inset-0 flex items-center justify-center pointer-events-none">
+                <p id="player-time-display" class="font-mono text-xs text-slate-500 tracking-widest">00:00 / ELAPSED</p>
+            </div>
+        </div>
+
+        <div class="bg-slate-950/40 p-5 rounded-2xl border border-slate-800/60 space-y-5">
+            
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div class="space-y-2">
+                    <label class="block text-xs font-bold uppercase tracking-wider text-slate-400 flex items-center gap-1">
+                        <i class="fa-solid fa-earth-americas"></i> Voice Accent
+                    </label>
+                    <select id="accent-select" class="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-sm text-slate-300 focus:outline-none focus:ring-1 focus:ring-indigo-500 cursor-pointer">
+                        <option value="en-US" selected>🇺🇸 English (United States)</option>
+                        <option value="en-GB">🇬🇧 English (United Kingdom)</option>
+                    </select>
+                </div>
+
+                <div class="space-y-2">
+                    <div class="flex justify-between items-center">
+                        <label class="block text-xs font-bold uppercase tracking-wider text-slate-400 flex items-center gap-1">
+                            <i class="fa-solid fa-gauge-high"></i> Speed Control
+                        </label>
+                        <span id="speed-display" class="font-mono text-sm font-bold text-indigo-400 bg-indigo-500/10 px-2 py-0.5 rounded border border-indigo-500/20">1.0x</span>
+                    </div>
+                    <div class="flex items-center gap-3 pt-1">
+                        <span class="text-xs font-mono text-slate-600">0.5x</span>
+                        <input type="range" id="speed-slider" min="0.5" max="2.0" step="0.1" value="1.0" class="w-full h-1 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-indigo-600">
+                        <span class="text-xs font-mono text-slate-600">2.0x</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="flex items-center justify-center gap-4 pt-2">
+                <button id="btn-stop" class="w-12 h-12 rounded-full bg-slate-800 hover:bg-slate-700 text-slate-300 flex items-center justify-center transition border border-slate-700/50 group" title="Stop">
+                    <i class="fa-solid fa-stop text-sm group-hover:scale-105 transition"></i>
+                </button>
+
+                <button id="btn-play-pause" class="w-16 h-16 rounded-full bg-indigo-600 hover:bg-indigo-500 text-white flex items-center justify-center shadow-lg shadow-indigo-600/20 transition transform hover:scale-105 active:scale-95" title="Play">
+                    <i class="fa-solid fa-play text-xl ml-0.5" id="play-icon"></i>
+                </button>
+            </div>
+        </div>
+
+    </div>
+
+    <script>
+        // --- 1. 状態管理変数 ---
+        let synth = window.speechSynthesis;
+        let utterance = null;
+        let isPlaying = false;
+        let isPaused = false;
+        
+        let playbackSpeed = 1.0;
+        let selectedLang = 'en-US';
+        let originalText = "";
+
+        // タイマー（経過時間シミュレーター）用
+        let startTime = 0;
+        let totalElapsedSeconds = 0;
+        let timerInterval = null;
+
+        // 【追加】長文途切れ防止タイマー用
+        let keepAliveTimer = null;
+
+        // Canvas アニメーション用
+        let animationId = null;
+        let canvas, ctx;
+
+        // --- 2. DOM要素の取得 ---
+        const textInput = document.getElementById('text-input');
+        const accentSelect = document.getElementById('accent-select');
+        const speedSlider = document.getElementById('speed-slider');
+        const speedDisplay = document.getElementById('speed-display');
+        
+        const btnPlayPause = document.getElementById('btn-play-pause');
+        const btnStop = document.getElementById('btn-stop');
+        const playIcon = document.getElementById('play-icon');
+        const waveIcon = document.getElementById('wave-icon');
+        
+        const statusBadge = document.getElementById('status-badge');
+        const statusDot = document.getElementById('status-dot');
+        const statusText = document.getElementById('status-text');
+        const timeDisplay = document.getElementById('player-time-display');
+
+        // --- 3. 初期化 ---
+        document.addEventListener('DOMContentLoaded', () => {
+            canvas = document.getElementById('visualizer-canvas');
+            ctx = canvas.getContext('2d');
+            
+            // トマト栽培の例文をデフォルトで挿入
+            textInput.value = "Tomato cultivation requires plenty of sunlight and well-drained soil. You should prune the suckers to help the main stem grow stronger.";
+
+            // イベントリスナー登録
+            btnPlayPause.addEventListener('click', togglePlayPause);
+            btnStop.addEventListener('click', stopAudio);
+            
+            speedSlider.addEventListener('input', handleSpeedChange);
+            accentSelect.addEventListener('change', handleAccentChange);
+
+            // Canvas初期描画（静止状態の波形）
+            drawWave(0);
+        });
+
+        // --- 4. プレーヤー制御関数 ---
+        function togglePlayPause() {
+            originalText = textInput.value.trim();
+            if (!originalText) {
+                alert("再生する英文を入力してください。");
+                return;
+            }
+
+            if (!isPlaying) {
+                // 新規再生開始
+                startAudio(originalText);
+            } else if (isPaused) {
+                // 一時停止からの再開
+                resumeAudio();
+            } else {
+                // 一時停止
+                pauseAudio();
+            }
+        }
+
+        function startAudio(text) {
+            // 一度完全にリセット
+            synth.cancel();
+            clearInterval(timerInterval);
+            clearInterval(keepAliveTimer); // 【追加】タイマーをリセット
+
+            utterance = new SpeechSynthesisUtterance(text);
+            utterance.lang = selectedLang;
+            utterance.rate = playbackSpeed;
+
+            // 音声合成のイベントハンドラ
+            utterance.onstart = () => {
+                isPlaying = true;
+                isPaused = false;
+                startTime = performance.now() - (totalElapsedSeconds * 1000);
+                startTimer();
+                updateUI();
+                startAnimation();
+
+                // 【バグ対策】10秒ごとに一瞬だけ pause/resume を行い、ブラウザの強制停止タイマーをリセットする
+                keepAliveTimer = setInterval(() => {
+                    synth.pause();
+                    synth.resume();
+                }, 10000);
+            };
+
+            utterance.onend = () => {
+                // 再生が正常に最後まで終了した場合
+                clearInterval(keepAliveTimer); // 【追加】終了時にタイマー解除
+                stopAudio();
+            };
+
+            utterance.onerror = (e) => {
+                console.error("SpeechSynthesis Error:", e);
+                clearInterval(keepAliveTimer); // 【追加】エラー時もタイマー解除
+                stopAudio();
+            };
+
+            // 発話実行
+            synth.speak(utterance);
+        }
+
+        function pauseAudio() {
+            synth.pause();
+            isPaused = true;
+            clearInterval(timerInterval);
+            clearInterval(keepAliveTimer); // 【追加】一時停止中は防止タイマーも止める
+            updateUI();
+        }
+
+        function resumeAudio() {
+            synth.resume();
+            isPaused = false;
+            // 再開時間を補正
+            startTime = performance.now() - (totalElapsedSeconds * 1000);
+            startTimer();
+            updateUI();
+
+            // 【追加】再開時に防止タイマーも再始動
+            keepAliveTimer = setInterval(() => {
+                synth.pause();
+                synth.resume();
+            }, 10000);
+        }
+
+        function stopAudio() {
+            synth.cancel();
+            isPlaying = false;
+            isPaused = false;
+            totalElapsedSeconds = 0;
+            clearInterval(timerInterval);
+            clearInterval(keepAliveTimer); // 【追加】停止時もクリア
+            timeDisplay.innerText = "00:00 / ELAPSED";
+            updateUI();
+            cancelAnimationFrame(animationId);
+            drawWave(0); // 静止波形に戻す
+        }
+
+        // --- 5. スライダー & 言語変更時のリアルタイム反映制御 ---
+        function handleSpeedChange(e) {
+            playbackSpeed = parseFloat(e.target.value);
+            speedDisplay.innerText = `${playbackSpeed.toFixed(1)}x`;
+
+            // 再生中に速度が変わった場合、Web Speech APIの仕様バグ（rate変更がリアルタイムに反映されないブラウザがある）を
+            // 回避するため、現在の経過時間を維持したままスムーズに再起動させます。
+            if (isPlaying && !isPaused) {
+                const textToSpeak = originalText; 
+                startAudio(textToSpeak);
+            }
+        }
+
+        function handleAccentChange(e) {
+            selectedLang = e.target.value;
+            if (isPlaying) {
+                stopAudio(); // アクセント変更時は安全のために一度停止
+            }
+        }
+
+        // --- 6. UIアップデートロジック ---
+        function updateUI() {
+            if (isPlaying && !isPaused) {
+                // 再生中
+                statusBadge.className = "bg-indigo-500/10 text-indigo-400 text-xs font-semibold px-3 py-1 rounded-full flex items-center gap-1.5 border border-indigo-500/20";
+                statusDot.className = "w-2 h-2 rounded-full bg-indigo-500 animate-ping";
+                statusText.innerText = "Playing";
+                
+                playIcon.className = "fa-solid fa-pause text-xl";
+                waveIcon.className = "fa-solid fa-waveform-lines animate-pulse";
+            } else if (isPlaying && isPaused) {
+                // 一時停止中
+                statusBadge.className = "bg-amber-500/10 text-amber-400 text-xs font-semibold px-3 py-1 rounded-full flex items-center gap-1.5 border border-amber-500/20";
+                statusDot.className = "w-2 h-2 rounded-full bg-amber-500";
+                statusText.innerText = "Paused";
+                
+                playIcon.className = "fa-solid fa-play text-xl ml-0.5";
+                waveIcon.className = "fa-solid fa-waveform-lines";
+            } else {
+                // 停止・待機中
+                statusBadge.className = "bg-slate-800 text-slate-400 text-xs font-semibold px-3 py-1 rounded-full flex items-center gap-1.5";
+                statusDot.className = "w-2 h-2 rounded-full bg-slate-500";
+                statusText.innerText = "Ready";
+                
+                playIcon.className = "fa-solid fa-play text-xl ml-0.5";
+                waveIcon.className = "fa-solid fa-waveform-lines";
+            }
+        }
+
+        // --- 7. タイマー制御 ---
+        function startTimer() {
+            timerInterval = setInterval(() => {
+                const now = performance.now();
+                totalElapsedSeconds = Math.floor((now - startTime) / 1000);
+                
+                const mins = Math.floor(totalElapsedSeconds / 60).toString().padStart(2, '0');
+                const secs = (totalElapsedSeconds % 60).toString().padStart(2, '0');
+                timeDisplay.innerText = `${mins}:${secs} / ELAPSED`;
+            }, 200);
+        }
+
+        // --- 8. Canvasを使用した波形ビジュアライザー（擬似表示） ---
+        function startAnimation() {
+            function animate(time) {
+                drawWave(time);
+                animationId = requestAnimationFrame(animate);
+            }
+            animationId = requestAnimationFrame(animate);
+        }
+
+        function drawWave(time) {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            ctx.lineWidth = 2;
+            ctx.strokeStyle = '#4f46e5'; // Indigo 600
+            ctx.beginPath();
+
+            const width = canvas.width;
+            const height = canvas.height;
+            const sliceWidth = width / 100;
+            
+            let x = 0;
+
+            for (let i = 0; i <= 100; i++) {
+                // 再生中かつ一時停止でない場合は時間ベースのサイン波を生成、それ以外は直線
+                let amplitude = (isPlaying && !isPaused) ? 15 : 0;
+                // スピードに応じて波の細かさを少し変える演出
+                let frequency = 0.05 * playbackSpeed; 
+                
+                let y = height / 2 + Math.sin(i * frequency + time * 0.007) * amplitude * Math.sin(i * 0.03);
+
+                if (i === 0) {
+                    ctx.moveTo(x, y);
+                } else {
+                    ctx.lineTo(x, y);
+                }
+
+                x += sliceWidth;
+            }
+
+            ctx.stroke();
+        }
+    </script>
+</body>
+</html>
